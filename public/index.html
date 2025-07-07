@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitLab Code Review Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+  </head>
+  <body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+      <header class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-gray-800 mb-2">
+          🤖 GitLab Code Review Agent
+        </h1>
+        <p class="text-gray-600">
+          AI-powered code reviews for your GitLab Merge Requests
+        </p>
+      </header>
+
+      <!-- Authentication Section -->
+      <div
+        id="auth-section"
+        class="max-w-md mx-auto bg-white rounded-lg shadow-md p-6 mb-8"
+      >
+        <h2 class="text-xl font-semibold mb-4">🔐 Authentication</h2>
+
+        <div id="not-authenticated" class="space-y-4">
+          <p class="text-gray-600">
+            Please enter your GitLab Personal Access Token to start reviewing
+            merge requests.
+          </p>
+          <div class="space-y-2">
+            <label
+              for="gitlab-token"
+              class="block text-sm font-medium text-gray-700"
+            >
+              GitLab Personal Access Token
+            </label>
+            <input
+              type="password"
+              id="gitlab-token"
+              placeholder="Enter your GitLab Personal Access Token"
+              class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <button
+            id="login-btn"
+            class="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded"
+          >
+            Authenticate with GitLab
+          </button>
+        </div>
+
+        <div id="authenticated" class="hidden space-y-4">
+          <div class="flex items-center text-green-600">
+            <span class="mr-2">✅</span>
+            <span
+              >Authenticated as
+              <span id="user-name" class="font-semibold"></span
+            ></span>
+          </div>
+          <button
+            id="logout-btn"
+            class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded"
+          >
+            Logout
+          </button>
+        </div>
+      </div>
+
+      <!-- Review Section -->
+      <div id="review-section" class="hidden max-w-2xl mx-auto">
+        <!-- Submit MR for Review -->
+        <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+          <h2 class="text-xl font-semibold mb-4">
+            📝 Submit Merge Request for Review
+          </h2>
+
+          <div class="space-y-4">
+            <div>
+              <label
+                for="mr-url"
+                class="block text-sm font-medium text-gray-700 mb-1"
+              >
+                GitLab Merge Request URL
+              </label>
+              <input
+                type="url"
+                id="mr-url"
+                placeholder="https://gitlab.td.gfk.com/group/project/-/merge_requests/123"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <button
+              id="submit-review-btn"
+              class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              🚀 Start AI Review
+            </button>
+          </div>
+        </div>
+
+        <!-- Review Status -->
+        <div
+          id="review-status"
+          class="hidden bg-white rounded-lg shadow-md p-6 mb-8"
+        >
+          <h3 class="text-lg font-semibold mb-4">📊 Review Status</h3>
+
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-gray-600">Job ID:</span>
+              <span
+                id="job-id"
+                class="font-mono text-sm bg-gray-100 px-2 py-1 rounded"
+              ></span>
+            </div>
+
+            <div class="flex items-center justify-between">
+              <span class="text-gray-600">Status:</span>
+              <span id="status" class="font-semibold"></span>
+            </div>
+
+            <div class="w-full bg-gray-200 rounded-full h-2">
+              <div
+                id="progress-bar"
+                class="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                style="width: 0%"
+              ></div>
+            </div>
+
+            <div id="current-step" class="text-sm text-gray-600 italic"></div>
+
+            <div
+              id="review-result"
+              class="hidden mt-4 p-4 bg-green-50 border border-green-200 rounded"
+            >
+              <h4 class="font-semibold text-green-800 mb-2">
+                ✅ Review Completed!
+              </h4>
+              <div id="result-content" class="space-y-2 text-sm"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Review History -->
+        <div class="bg-white rounded-lg shadow-md p-6">
+          <h3 class="text-lg font-semibold mb-4">📚 Review History</h3>
+          <div id="history-content">
+            <button
+              id="load-history-btn"
+              class="text-blue-500 hover:text-blue-600"
+            >
+              Load Review History
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      class GitLabReviewUI {
+        constructor() {
+          this.apiBase = '/api';
+          this.token = localStorage.getItem('gitlab_review_token');
+          this.currentJobId = null;
+          this.pollInterval = null;
+
+          this.initializeUI();
+          this.bindEvents();
+          this.checkAuthStatus();
+        }
+
+        initializeUI() {
+          // Get DOM elements
+          this.elements = {
+            authSection: document.getElementById('auth-section'),
+            notAuthenticated: document.getElementById('not-authenticated'),
+            authenticated: document.getElementById('authenticated'),
+            reviewSection: document.getElementById('review-section'),
+            gitlabToken: document.getElementById('gitlab-token'),
+            loginBtn: document.getElementById('login-btn'),
+            logoutBtn: document.getElementById('logout-btn'),
+            userName: document.getElementById('user-name'),
+            mrUrl: document.getElementById('mr-url'),
+            submitReviewBtn: document.getElementById('submit-review-btn'),
+            reviewStatus: document.getElementById('review-status'),
+            jobId: document.getElementById('job-id'),
+            status: document.getElementById('status'),
+            progressBar: document.getElementById('progress-bar'),
+            currentStep: document.getElementById('current-step'),
+            reviewResult: document.getElementById('review-result'),
+            resultContent: document.getElementById('result-content'),
+            loadHistoryBtn: document.getElementById('load-history-btn'),
+            historyContent: document.getElementById('history-content'),
+          };
+        }
+
+        bindEvents() {
+          this.elements.loginBtn.addEventListener('click', () =>
+            this.startAuth()
+          );
+          this.elements.logoutBtn.addEventListener('click', () =>
+            this.logout()
+          );
+          this.elements.submitReviewBtn.addEventListener('click', () =>
+            this.submitReview()
+          );
+          this.elements.loadHistoryBtn.addEventListener('click', () =>
+            this.loadHistory()
+          );
+        }
+
+        async checkAuthStatus() {
+          if (this.token) {
+            try {
+              const response = await this.apiCall('/auth/me', 'GET');
+              this.showAuthenticated(response.user);
+            } catch (error) {
+              this.token = null;
+              localStorage.removeItem('gitlab_review_token');
+              this.showNotAuthenticated();
+            }
+          } else {
+            this.showNotAuthenticated();
+          }
+        }
+
+        async startAuth() {
+          const gitlabToken = this.elements.gitlabToken.value.trim();
+          if (!gitlabToken) {
+            this.showError('Please enter your GitLab Personal Access Token');
+            return;
+          }
+
+          try {
+            const response = await axios.get(`${this.apiBase}/auth/validate`, {
+              headers: {
+                'PRIVATE-TOKEN': gitlabToken,
+              },
+            });
+
+            if (response.data.valid) {
+              this.token = gitlabToken;
+              localStorage.setItem('gitlab_review_token', gitlabToken);
+              this.showAuthenticated(response.data.user);
+              this.elements.gitlabToken.value = ''; // Clear the token input
+            } else {
+              this.showError('Invalid GitLab token');
+            }
+          } catch (error) {
+            console.error('Authentication error:', error);
+            this.showError('Failed to authenticate with GitLab');
+          }
+        }
+
+        logout() {
+          this.token = null;
+          localStorage.removeItem('gitlab_review_token');
+          this.showNotAuthenticated();
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+          }
+        }
+
+        async submitReview() {
+          const mrUrl = this.elements.mrUrl.value.trim();
+          if (!mrUrl) {
+            this.showError('Please enter a valid GitLab MR URL');
+            return;
+          }
+
+          try {
+            this.elements.submitReviewBtn.disabled = true;
+            this.elements.submitReviewBtn.textContent = '⏳ Starting...';
+
+            const response = await this.apiCall('/review/analyze', 'POST', {
+              mrUrl,
+            });
+            this.currentJobId = response.jobId;
+
+            this.showReviewStatus();
+            this.startPolling();
+          } catch (error) {
+            this.showError(
+              'Failed to start review: ' +
+                (error.response?.data?.error || error.message)
+            );
+          } finally {
+            this.elements.submitReviewBtn.disabled = false;
+            this.elements.submitReviewBtn.textContent = '🚀 Start AI Review';
+          }
+        }
+
+        showReviewStatus() {
+          this.elements.reviewStatus.classList.remove('hidden');
+          this.elements.jobId.textContent = this.currentJobId;
+        }
+
+        async startPolling() {
+          if (this.pollInterval) {
+            clearInterval(this.pollInterval);
+          }
+
+          this.pollInterval = setInterval(async () => {
+            try {
+              await this.checkReviewStatus();
+            } catch (error) {
+              console.error('Polling error:', error);
+            }
+          }, 2000);
+
+          // Initial check
+          await this.checkReviewStatus();
+        }
+
+        async checkReviewStatus() {
+          if (!this.currentJobId) return;
+
+          try {
+            const response = await this.apiCall(
+              `/review/status/${this.currentJobId}`,
+              'GET'
+            );
+            this.updateStatusDisplay(response);
+
+            if (
+              response.status === 'completed' ||
+              response.status === 'failed'
+            ) {
+              clearInterval(this.pollInterval);
+              this.pollInterval = null;
+            }
+          } catch (error) {
+            console.error('Status check failed:', error);
+          }
+        }
+
+        updateStatusDisplay(statusData) {
+          const { status, progress, currentStep, result } = statusData;
+
+          this.elements.status.textContent = status.toUpperCase();
+          this.elements.status.className = `font-semibold ${this.getStatusColor(
+            status
+          )}`;
+
+          this.elements.progressBar.style.width = `${progress || 0}%`;
+          this.elements.currentStep.textContent = currentStep || '';
+
+          if (status === 'completed' && result) {
+            this.showReviewResult(result);
+          }
+        }
+
+        showReviewResult(result) {
+          this.elements.reviewResult.classList.remove('hidden');
+          this.elements.resultContent.innerHTML = `
+                    <div><strong>Summary:</strong> ${result.summary}</div>
+                    <div><strong>Comments Posted:</strong> ${result.commentsPosted}</div>
+                    <div><strong>Recommendation:</strong> ${result.overallRecommendation}</div>
+                    <div><strong>MR Title:</strong> ${result.mrTitle}</div>
+                `;
+        }
+
+        async loadHistory() {
+          try {
+            const response = await this.apiCall('/review/history', 'GET');
+            this.displayHistory(response.history);
+          } catch (error) {
+            this.showError('Failed to load history');
+          }
+        }
+
+        displayHistory(history) {
+          if (history.length === 0) {
+            this.elements.historyContent.innerHTML =
+              '<p class="text-gray-500">No reviews found</p>';
+            return;
+          }
+
+          const historyHtml = history
+            .map(
+              (review) => `
+                    <div class="border-b border-gray-200 py-3">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="font-medium">${
+                                  review.projectPath
+                                }!${review.mrIid}</div>
+                                <div class="text-sm text-gray-500">${new Date(
+                                  review.startTime
+                                ).toLocaleString()}</div>
+                                ${
+                                  review.summary
+                                    ? `<div class="text-sm text-gray-600 mt-1">${review.summary.substring(
+                                        0,
+                                        100
+                                      )}...</div>`
+                                    : ''
+                                }
+                            </div>
+                            <span class="px-2 py-1 text-xs rounded ${this.getStatusColor(
+                              review.status
+                            )} bg-opacity-20">
+                                ${review.status}
+                            </span>
+                        </div>
+                    </div>
+                `
+            )
+            .join('');
+
+          this.elements.historyContent.innerHTML = historyHtml;
+        }
+
+        getStatusColor(status) {
+          const colors = {
+            processing: 'text-blue-600',
+            completed: 'text-green-600',
+            failed: 'text-red-600',
+          };
+          return colors[status] || 'text-gray-600';
+        }
+
+        showAuthenticated(user) {
+          this.elements.notAuthenticated.classList.add('hidden');
+          this.elements.authenticated.classList.remove('hidden');
+          this.elements.reviewSection.classList.remove('hidden');
+          this.elements.userName.textContent = user.name || user.username;
+        }
+
+        showNotAuthenticated() {
+          this.elements.notAuthenticated.classList.remove('hidden');
+          this.elements.authenticated.classList.add('hidden');
+          this.elements.reviewSection.classList.add('hidden');
+        }
+
+        async apiCall(endpoint, method = 'GET', data = null) {
+          const config = {
+            method,
+            url: `${this.apiBase}${endpoint}`,
+            headers: {},
+          };
+
+          if (this.token) {
+            config.headers['PRIVATE-TOKEN'] = this.token;
+          }
+
+          if (data) {
+            config.data = data;
+            config.headers['Content-Type'] = 'application/json';
+          }
+
+          const response = await axios(config);
+          return response.data;
+        }
+
+        showError(message) {
+          // Simple error display - could be enhanced with a toast library
+          alert('Error: ' + message);
+        }
+      }
+
+      // Initialize the UI when the page loads
+      document.addEventListener('DOMContentLoaded', () => {
+        new GitLabReviewUI();
+      });
+    </script>
+  </body>
+</html>
